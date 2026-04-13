@@ -1,0 +1,79 @@
+version: '3.9'
+
+services:
+
+  api-gateway:
+    build: ./gateway
+    ports:
+      - "8080:8080"
+    env_file: ./gateway/.env
+    depends_on:
+      - auth-service
+      - user-service
+      - clinic-service
+      - doctor-service
+      - scheduling-service
+      - appointment-service
+      - notification-service
+    networks:
+      - clinic-network
+
+  auth-service:
+    build: ./services/auth-service
+    ports:
+      - "3001:3001"
+    env_file: ./services/auth-service/.env
+    networks:
+      - clinic-network
+
+  user-service:
+    build: ./services/user-service
+    ports:
+      - "3002:3002"
+    env_file: ./services/user-service/.env
+    networks:
+      - clinic-network
+
+  clinic-service:
+    build: ./services/clinic-service
+    ports:
+      - "3003:3003"
+    env_file: ./services/clinic-service/.env
+    networks:
+      - clinic-network
+
+  doctor-service:
+    build: ./services/doctor-service
+    ports:
+      - "3004:3004"
+    env_file: ./services/doctor-service/.env
+    networks:
+      - clinic-network
+
+  scheduling-service:
+    build: ./services/scheduling-service
+    ports:
+      - "3005:3005"
+    env_file: ./services/scheduling-service/.env
+    networks:
+      - clinic-network
+
+  appointment-service:
+    build: ./services/appointment-service
+    ports:
+      - "3006:3006"
+    env_file: ./services/appointment-service/.env
+    networks:
+      - clinic-network
+
+  notification-service:
+    build: ./services/notification-service
+    ports:
+      - "3007:3007"
+    env_file: ./services/notification-service/.env
+    networks:
+      - clinic-network
+
+networks:
+  clinic-network:
+    driver: bridge
