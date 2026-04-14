@@ -1,21 +1,14 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const express = require('express');
 const cors = require('cors');
+const doctorRoutes = require('./routes/doctors');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Health check — used by API Gateway to verify service is alive
-app.get('/health', (req, res) => {
-  res.json({ service: 'doctor-service', status: 'ok', port: 3004 });
-});
-
-// TODO: mount routes
-// const routes = require('./routes');
-// app.use('/', routes);
+app.get('/health', (req, res) => res.json({ service: 'doctor-service', status: 'ok' }));
+app.use('/', doctorRoutes);
 
 const PORT = process.env.PORT || 3004;
-app.listen(PORT, () => {
-  console.log(`doctor-service running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Doctor Service running on port ${PORT}`));
