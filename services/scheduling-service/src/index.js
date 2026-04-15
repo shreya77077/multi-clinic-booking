@@ -1,14 +1,14 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const express = require('express');
 const cors = require('cors');
-const schedulingRoutes = require('./routes/scheduling');
-
+const { getAvailableSlots, setAvailability, addLeave } = require('./controllers/schedulingController');
+const { authenticate, authorize } = require('./middleware/auth');
 const app = express();
 app.use(cors());
 app.use(express.json());
-
 app.get('/health', (req, res) => res.json({ service: 'scheduling-service', status: 'ok' }));
-app.use('/', schedulingRoutes);
-
+app.get(['/slots', '/scheduling/slots'], authenticate, getAvailableSlots);
+app.post(['/availability', '/scheduling/availability'], authenticate, authorize('admin','doctor'), setAvailability);
+app.post(['/leave', '/scheduling/leave'], authenticate, authorize('admin','doctor'), addLeave);
 const PORT = process.env.PORT || 3005;
 app.listen(PORT, () => console.log(`Scheduling Service running on port ${PORT}`));

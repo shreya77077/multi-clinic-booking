@@ -1,14 +1,15 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const express = require('express');
 const cors = require('cors');
-const appointmentRoutes = require('./routes/appointments');
-
+const { bookAppointment, getMyAppointments, cancelAppointment, getAllAppointments } = require('./controllers/appointmentController');
+const { authenticate, authorize } = require('./middleware/auth');
 const app = express();
 app.use(cors());
 app.use(express.json());
-
 app.get('/health', (req, res) => res.json({ service: 'appointment-service', status: 'ok' }));
-app.use('/', appointmentRoutes);
-
+app.post(['/appointments', '/'], authenticate, authorize('patient'), bookAppointment);
+app.get(['/appointments/me', '/me'], authenticate, getMyAppointments);
+app.put(['/appointments/:id/cancel', '/:id/cancel'], authenticate, cancelAppointment);
+app.get(['/appointments', '/all'], authenticate, authorize('admin','doctor'), getAllAppointments);
 const PORT = process.env.PORT || 3006;
 app.listen(PORT, () => console.log(`Appointment Service running on port ${PORT}`));
