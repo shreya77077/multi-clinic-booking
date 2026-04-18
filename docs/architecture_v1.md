@@ -1,7 +1,9 @@
 # Architecture Documentation
 ## Multi-Clinic Appointment Booking System
-**Course:** SS G653 Software Architectures | BITS Pilani | Dr. Tanmaya Mahapatra  
-**Pattern:** Microservices Architecture  
+
+**Course:** SS G653 Software Architectures | BITS Pilani, Pilani Campus  
+**Instructor:** Dr. Tanmaya Mahapatra  
+**Reference:** *Software Architecture in Practice*, Bass, Clements, Kazman, 4th Ed., Pearson, 2024  
 **GitHub:** https://github.com/shreya77077/multi-clinic-booking  
 **Live Demo:** https://multi-clinic-booking.vercel.app
 
@@ -9,182 +11,188 @@
 
 ## Table of Contents
 1. [System Overview](#1-system-overview)
-2. [Architectural Pattern — Microservices](#2-architectural-pattern--microservices)
-3. [Module View (Decomposition)](#3-module-view-decomposition)
-4. [Component-and-Connector View (C&C)](#4-component-and-connector-view-cc)
-5. [Deployment View](#5-deployment-view)
-6. [Quality Attribute Scenarios](#6-quality-attribute-scenarios)
-7. [ADD — Attribute-Driven Design Rationale](#7-add--attribute-driven-design-rationale)
+2. [Architectural Pattern](#2-architectural-pattern)
+3. [System Decomposition](#3-system-decomposition)
+4. [Runtime Architecture](#4-runtime-architecture)
+5. [Deployment Architecture](#5-deployment-architecture)
+6. [Quality Attribute Analysis](#6-quality-attribute-analysis)
+7. [Design Rationale — ADD Method](#7-design-rationale--add-method)
 8. [Design Decisions and Tradeoffs](#8-design-decisions-and-tradeoffs)
-9. [Inter-Service Communication Map](#9-inter-service-communication-map)
+9. [Inter-Service Communication](#9-inter-service-communication)
 10. [Database Design](#10-database-design)
+11. [Setup and Execution](#11-setup-and-execution)
 
 ---
 
 ## 1. System Overview
 
-The Multi-Clinic Appointment Booking System is a web-based platform that enables patients to discover clinics, browse doctors, and book appointments online. Clinic administrators can manage doctors and schedules. Doctors can view their appointments.
+The Multi-Clinic Appointment Booking System is a web-based platform that enables patients to discover clinics, browse doctors, and book appointments online. Clinic administrators manage doctors and schedules. Doctors view their appointments.
 
 ### Stakeholders
 
-| Stakeholder | Concern |
+| Stakeholder | Primary Concern |
 |---|---|
-| Patient | Easy appointment booking, no double bookings, appointment history |
+| Patient | Easy booking, no double bookings, appointment history |
 | Doctor | View daily schedule, manage availability |
-| Clinic Admin | Manage clinic data, doctor assignments, view all appointments |
-| Developer | Maintainability, testability, independent deployability |
-| Course Instructor | Clear architectural pattern, documented views, QA analysis |
+| Clinic Admin | Manage clinic data, doctor assignments, all appointments |
+| Developer | Independent deployability, maintainability, testability |
+| Course Instructor | Clear pattern implementation, documented views, QA analysis |
 
 ### System Scope
 
-**Inside scope:**
-- User registration and authentication (JWT-based)
+**In scope:**
+- User registration and authentication (JWT-based, role-based)
 - Clinic and doctor management
-- Availability slot generation
+- Availability slot generation and leave management
 - Appointment booking with conflict prevention
-- Notification logging
+- Notification event logging
 - Role-based access control (Patient / Doctor / Admin)
 
-**Outside scope:**
-- Payment processing
+**Out of scope:**
+- Payment processing (future scope)
 - Video consultation
+- Physical SMS/Email delivery (events logged, not physically sent)
 - Medical records / EMR
-- SMS/Email delivery (logged but not physically sent in current implementation)
 
 ---
 
-## 2. Architectural Pattern — Microservices
+## 2. Architectural Pattern
 
-### Definition
-The system is structured as a collection of small, independently deployable services, each responsible for a specific business capability. Services communicate over HTTP via a central API Gateway.
+### Pattern: Service-Oriented Architecture (SOA) / Microservices
 
-### Why Microservices?
+The system is structured as a collection of independently deployable services, each responsible for a single business capability. Services communicate over HTTP through a central API Gateway. This is a **Component-and-Connector architectural style** where:
 
-**Business goals driving this choice:**
+- **Components** are services — Auth, User, Clinic, Doctor, Scheduling, Appointment, Notification
+- **Connectors** are synchronous REST/HTTP calls and one asynchronous (fire-and-forget) notification call
+- The **API Gateway** is the single entry point for all client requests, enforcing authentication and routing
 
-| Business Goal | Architectural Impact |
-|---|---|
-| System must scale independently per feature | Each service scales horizontally without affecting others |
-| New clinic types may require new booking rules | Services can be extended independently (OCP) |
-| Auth and appointment logic must be fault-isolated | A crash in Notification Service does not affect Appointment booking |
-| Multiple roles (patient, doctor, admin) with different access patterns | Gateway enforces role-based routing centrally |
+### Why This Pattern?
+
+The key architecturally significant requirements (ASRs) that drove this choice:
+
+| Requirement | Priority | How SOA satisfies it |
+|---|---|---|
+| A crash in one service must not affect others | High | Each service runs as a separate process — failures are contained |
+| Each service must be deployable independently | High | Every service has its own deployment on Render |
+| High-load services must scale without scaling everything | High | Appointment Service scales independently |
+| All requests must be authenticated at one place | High | API Gateway verifies JWT before forwarding to any service |
+| New services (e.g. Payment) must be addable without changing existing services | High | New service = new folder + new gateway route. Zero changes to existing services. |
 
 ### Services
 
-| Service | Port | Responsibility | Own Data |
-|---|---|---|---|
-| API Gateway | 8080 | Routing, JWT verification, rate limiting | None |
-| Auth Service | 3001 | Register, login, JWT issuance | users table |
-| User Service | 3002 | Patient & doctor profile management | patient_profiles, doctor_profiles |
-| Clinic Service | 3003 | Clinic CRUD, admin assignment | clinics, clinic_admins |
-| Doctor Service | 3004 | Doctor profiles, clinic-doctor mapping | doctor_clinic |
-| Scheduling Service | 3005 | Availability slots, leave management | availability, leave_requests |
-| Appointment Service | 3006 | Book, cancel, reschedule, conflict prevention | appointments, appointment_history |
-| Notification Service | 3007 | Notification event logging | notification_log |
+| Service | Port | Responsibility |
+|---|---|---|
+| API Gateway | 8080 | Routing, JWT verification, rate limiting |
+| Auth Service | 3001 | User registration, login, JWT issuance |
+| User Service | 3002 | Patient and doctor profile management |
+| Clinic Service | 3003 | Clinic creation and management |
+| Doctor Service | 3004 | Doctor profiles, clinic-doctor assignment |
+| Scheduling Service | 3005 | Weekly availability, slot generation, leave |
+| Appointment Service | 3006 | Book, cancel, reschedule appointments |
+| Notification Service | 3007 | Notification event logging |
 
 ---
 
-## 3. Module View (Decomposition)
+## 3. System Decomposition
 
 ```
 multi-clinic-booking/
 │
-├── gateway/                        [API Gateway Module]
+├── gateway/                        [API Gateway]
 │   └── src/
-│       ├── index.js                — Express app, proxy routing
+│       ├── index.js                — Proxy routing, rate limiting
 │       └── middleware/auth.js      — JWT verification
 │
 ├── services/
-│   ├── auth-service/               [Authentication Module]
+│   ├── auth-service/
 │   │   └── src/
 │   │       ├── controllers/authController.js   — register, login, getMe
-│   │       ├── routes/auth.js                  — POST /register, POST /login
-│   │       ├── middleware/protect.js            — JWT guard
-│   │       └── utils/supabase.js               — DB client
+│   │       ├── routes/auth.js
+│   │       ├── middleware/protect.js
+│   │       └── utils/supabase.js
 │   │
-│   ├── user-service/               [User Profile Module]
+│   ├── user-service/
 │   │   └── src/
 │   │       ├── controllers/userController.js   — getProfile, updateProfile
 │   │       └── routes/users.js
 │   │
-│   ├── clinic-service/             [Clinic Management Module]
+│   ├── clinic-service/
 │   │   └── src/
 │   │       ├── controllers/clinicController.js — getAllClinics, createClinic
 │   │       └── routes/clinics.js
 │   │
-│   ├── doctor-service/             [Doctor Module]
+│   ├── doctor-service/
 │   │   └── src/
 │   │       ├── controllers/doctorController.js — getDoctorsByClinic, assign
 │   │       └── routes/doctors.js
 │   │
-│   ├── scheduling-service/         [Scheduling Module]
+│   ├── scheduling-service/
 │   │   └── src/
 │   │       ├── controllers/schedulingController.js — getSlots, setAvailability
 │   │       └── routes/scheduling.js
 │   │
-│   ├── appointment-service/        [Appointment Module]
+│   ├── appointment-service/
 │   │   └── src/
 │   │       ├── controllers/appointmentController.js — book, cancel, getAll
 │   │       └── routes/appointments.js
 │   │
-│   └── notification-service/       [Notification Module]
+│   └── notification-service/
 │       └── src/
 │           ├── controllers/notificationController.js — sendNotification
 │           └── routes/notifications.js
 │
-├── shared/                         [Shared Utilities]
+├── shared/
 │   ├── middleware/auth.js          — Shared JWT authenticate/authorize
 │   └── utils/supabase.js           — Shared Supabase client factory
 │
-├── frontend/                       [Presentation Module]
+├── frontend/
 │   ├── app/
 │   │   ├── page.tsx                — Landing page
-│   │   ├── login/page.tsx          — Login
-│   │   ├── register/page.tsx       — Registration
+│   │   ├── login/page.tsx
+│   │   ├── register/page.tsx
 │   │   └── dashboard/
-│   │       ├── patient/page.tsx    — Patient booking flow
-│   │       ├── doctor/page.tsx     — Doctor appointment view
-│   │       └── admin/page.tsx      — Admin management
+│   │       ├── patient/page.tsx    — Clinic → Doctor → Slot → Book flow
+│   │       ├── doctor/page.tsx     — Appointment view
+│   │       └── admin/page.tsx      — Clinic management
 │   └── lib/
-│       ├── api.ts                  — API client (auth, clinic, doctor, scheduling, appointment)
-│       └── auth.ts                 — Token management (localStorage)
+│       ├── api.ts                  — API client
+│       └── auth.ts                 — Token management
 │
 └── docs/
-    ├── schema.sql                  — Complete Supabase schema
-    └── architecture.md             — This document
+    ├── schema.sql
+    └── architecture_v1.md          — This document
 ```
 
-### Module Responsibilities
+### Service Responsibilities
 
-| Module | Single Responsibility | Reason to Change |
+| Service | Single Responsibility | Only reason to change |
 |---|---|---|
-| Auth Service | Identity and token management | Change in auth strategy (e.g., OAuth) |
-| Clinic Service | Clinic data management | Change in clinic data model |
-| Scheduling Service | Slot generation algorithm | Change in booking rules (e.g., 15-min slots) |
-| Appointment Service | Booking lifecycle | Change in cancellation policy |
-| Notification Service | Event logging and alerting | Add real email/SMS provider |
-| API Gateway | Request routing and auth | Add new service or change routing rules |
+| Auth | Identity and token management | Change in auth strategy |
+| Clinic | Clinic data management | Change in clinic data model |
+| Scheduling | Slot generation algorithm | Change in booking rules |
+| Appointment | Booking lifecycle | Change in cancellation policy |
+| Notification | Event logging and alerting | Add real email/SMS provider |
+| Gateway | Request routing and auth | Add new service or routing rule |
 
 ---
 
-## 4. Component-and-Connector View (C&C)
+## 4. Runtime Architecture
 
-### Runtime Architecture Diagram
+### System Diagram
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   Browser (Patient/Doctor/Admin)         │
-│                   Next.js SPA — Vercel                   │
-└───────────────────────┬─────────────────────────────────┘
-                        │ HTTPS (REST/JSON)
-                        ▼
-┌─────────────────────────────────────────────────────────┐
-│                   API Gateway :8080                      │
-│   ┌─────────────────────────────────────────────────┐   │
-│   │  Rate Limiter (100 req/15min)                   │   │
-│   │  JWT Verifier (x-user-id, x-user-role headers) │   │
-│   │  HTTP Proxy (http-proxy-middleware)             │   │
-│   └─────────────────────────────────────────────────┘   │
+┌──────────────────────────────────────────────────────────┐
+│              Browser (Patient / Doctor / Admin)           │
+│              Next.js SPA — Vercel                         │
+└──────────────────────────┬───────────────────────────────┘
+                           │ HTTPS (REST/JSON)
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│                     API Gateway :8080                     │
+│                                                           │
+│   Rate Limiter (100 req / 15 min per IP)                 │
+│   JWT Verifier → sets x-user-id, x-user-role headers    │
+│   HTTP Proxy → forwards to correct service               │
 └──┬──────┬──────┬──────┬──────┬──────┬──────┬────────────┘
    │      │      │      │      │      │      │
    ▼      ▼      ▼      ▼      ▼      ▼      ▼
@@ -192,372 +200,436 @@ multi-clinic-booking/
  :3001  :3002  :3003  :3004  :3005  :3006  :3007
    │      │      │      │      │      │      │
    └──────┴──────┴──────┴──────┴──────┴──────┘
-                         │
-              ┌──────────▼──────────┐
-              │   Supabase          │
-              │   PostgreSQL        │
-              │   (shared DB,       │
-              │    11 tables)       │
-              └─────────────────────┘
+                          │
+             ┌────────────▼────────────┐
+             │       Supabase          │
+             │       PostgreSQL        │
+             │       11 tables         │
+             └─────────────────────────┘
+```
+
+### Appointment Booking — Step-by-Step Flow
+
+```
+Patient Browser
+    │
+    │── POST /api/appointments ──────────────────────▶ API Gateway
+                                                            │
+                                                 1. Verify JWT token
+                                                 2. Add x-user-id header
+                                                            │
+                                                            ▼
+                                                  Appointment Service
+                                                            │
+                                              3. Fetch patient profile (DB)
+                                              4. Check double booking (DB)
+                                              5. INSERT appointment (DB)
+                                              6. INSERT history record (DB)
+                                              7. POST /notify ──▶ Notification
+                                                                       │
+                                                               8. Log event (DB)
+                                                            │
+                                    ◀── 201 Created + appointment JSON ──┘
 ```
 
 ### Connector Types
 
-| Connector | Type | Between | Data Exchanged |
+| Connector | Protocol | Between | Nature |
 |---|---|---|---|
-| Client ↔ Gateway | HTTPS REST | Browser ↔ Gateway | JSON request/response |
-| Gateway ↔ Services | HTTP Proxy | Gateway ↔ Each service | Forwarded HTTP request + x-user headers |
-| Services ↔ Supabase | HTTPS (supabase-js) | Each service ↔ DB | SQL queries via REST API |
-| Appointment → Notification | HTTP (fire-and-forget) | Appointment Service → Notification Service | Notification event payload |
-
-### Key Runtime Behaviour — Appointment Booking Flow
-
-```
-Patient Browser
-    │── POST /api/appointments ──────────────────────────────────▶ API Gateway
-                                                                        │
-                                                              JWT verify │
-                                                            x-user-id added
-                                                                        │
-                                                                        ▼
-                                                              Appointment Service
-                                                                        │
-                                                        1. Get patient profile (DB)
-                                                        2. Check for double booking (DB)
-                                                        3. INSERT appointment (DB)
-                                                        4. INSERT appointment_history (DB)
-                                                        5. POST /notify ──────▶ Notification Service
-                                                                                      │
-                                                                              INSERT notification_log
-                                                                        │
-                                                    ◀── 201 + appointment object ──────┘
-```
+| Client ↔ Gateway | HTTPS REST | Browser ↔ Gateway | Synchronous |
+| Gateway ↔ Services | HTTP Proxy | Gateway ↔ Each service | Synchronous |
+| Services ↔ Supabase | HTTPS (supabase-js) | Each service ↔ DB | Synchronous |
+| Appointment → Notification | HTTP | Appointment ↔ Notification | Async (fire-and-forget) |
 
 ---
 
-## 5. Deployment View
+## 5. Deployment Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        VERCEL (CDN / Edge)                       │
-│                                                                   │
-│   ┌───────────────────────────────────────┐                      │
-│   │  Next.js Frontend                     │                      │
-│   │  multi-clinic-booking.vercel.app      │                      │
-│   │  Auto-deploy on git push to main      │                      │
-│   └───────────────────────────────────────┘                      │
-└──────────────────────────┬──────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    VERCEL (CDN / Global Edge)                 │
+│                                                               │
+│   Next.js Frontend                                            │
+│   https://multi-clinic-booking.vercel.app                    │
+│   Auto-redeploys on every git push to main                   │
+└──────────────────────────┬──────────────────────────────────┘
                            │ HTTPS
-┌──────────────────────────▼──────────────────────────────────────┐
-│                        RENDER (Free Tier)                         │
-│                                                                   │
-│  ┌─────────────────────┐   Each service:                         │
-│  │  API Gateway        │   - Node.js runtime                     │
-│  │  :8080              │   - Auto-deploy on git push             │
-│  └──────┬──────────────┘   - Spins down after 15min inactivity   │
-│         │                  - 512MB RAM, 0.1 CPU                  │
-│  ┌──────▼──────────────────────────────────────────────────┐    │
-│  │  Auth  User  Clinic  Doctor  Scheduling  Appt  Notif    │    │
-│  │  3001  3002   3003   3004      3005      3006   3007    │    │
-│  └──────────────────────────────────────────────────────────┘    │
-└──────────────────────────┬──────────────────────────────────────┘
+┌──────────────────────────▼──────────────────────────────────┐
+│                    RENDER (Free Tier)                         │
+│                                                               │
+│   API Gateway    → multi-clinic-gateway.onrender.com         │
+│   Auth Service   → multi-clinic-booking.onrender.com         │
+│   User Service   → multi-clinic-user-service.onrender.com    │
+│   Clinic Service → multi-clinic-clinic-service.onrender.com  │
+│   Doctor Service → multi-clinic-doctor-service.onrender.com  │
+│   Scheduling     → multi-clinic-scheduling-service.onrender.com│
+│   Appointment    → multi-clinic-appointment-service.onrender.com│
+│   Notification   → multi-clinic-notification-service.onrender.com│
+│                                                               │
+│   Each service: Node.js runtime, auto-deploy on git push     │
+└──────────────────────────┬──────────────────────────────────┘
                            │ HTTPS (supabase-js)
-┌──────────────────────────▼──────────────────────────────────────┐
-│                        SUPABASE (South Asia / Mumbai)             │
-│                                                                   │
-│   PostgreSQL Database                                             │
-│   - 11 tables                                                     │
-│   - Row Level Security (manual policies)                          │
-│   - Auto-generated REST API (Data API)                            │
-│   - Free tier: 500MB storage, 50K MAU                            │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────▼──────────────────────────────────┐
+│                    SUPABASE (South Asia / Mumbai)             │
+│                                                               │
+│   PostgreSQL — 11 tables                                      │
+│   Auto-generated REST API                                     │
+│   Free tier: 500MB storage, 50K MAU                          │
+└─────────────────────────────────────────────────────────────┘
 ```
-
-### Deployment Configuration
-
-| Component | Platform | URL | Auto-deploy |
-|---|---|---|---|
-| Frontend | Vercel | multi-clinic-booking.vercel.app | ✅ On push to main |
-| API Gateway | Render | multi-clinic-gateway.onrender.com | ✅ On push to main |
-| Auth Service | Render | multi-clinic-booking.onrender.com | ✅ On push to main |
-| User Service | Render | multi-clinic-user-service.onrender.com | ✅ On push to main |
-| Clinic Service | Render | multi-clinic-clinic-service.onrender.com | ✅ On push to main |
-| Doctor Service | Render | multi-clinic-doctor-service.onrender.com | ✅ On push to main |
-| Scheduling Service | Render | multi-clinic-scheduling-service.onrender.com | ✅ On push to main |
-| Appointment Service | Render | multi-clinic-appointment-service.onrender.com | ✅ On push to main |
-| Notification Service | Render | multi-clinic-notification-service.onrender.com | ✅ On push to main |
-| Database | Supabase | ibdyphgjfsxzpflhzznz.supabase.co | N/A |
 
 ---
 
-## 6. Quality Attribute Scenarios
+## 6. Quality Attribute Analysis
 
-### QA 1 — Availability
+### Availability
 
-**Scenario:** The Notification Service crashes during peak hours.
+**Scenario:** The Notification Service crashes during peak booking hours.
 
-| Part | Value |
+| Element | Value |
 |---|---|
 | Source | Internal fault in Notification Service |
 | Stimulus | Runtime exception causes service crash |
 | Artifact | Notification Service |
-| Environment | Normal operation, peak booking hours |
-| Response | Appointment Service continues to book appointments. Notification call fails silently (fire-and-forget). No patient-facing error. |
+| Environment | Normal operation, peak hours |
+| Response | Appointment booking continues unaffected. Notification call fails silently. |
 | Response Measure | 0% of appointment bookings fail due to Notification Service downtime |
 
-**Tactic used:** *Fault isolation* — Appointment Service calls Notification Service asynchronously with `.catch(() => {})`. A crash in one service does not cascade.
+**Tactic:** Fault isolation + ignore faulty behaviour. The Appointment Service calls Notification asynchronously with `.catch(() => {})`. A crash in one service does not cascade to others.
 
 ---
 
-### QA 2 — Performance
-
-**Scenario:** 100 patients simultaneously attempt to book appointments.
-
-| Part | Value |
-|---|---|
-| Source | 100 concurrent patients |
-| Stimulus | 100 simultaneous POST /api/appointments requests |
-| Artifact | Appointment Service + Supabase DB |
-| Environment | Normal operation |
-| Response | Each request processed independently. DB-level UNIQUE constraint prevents double booking. |
-| Response Measure | All 100 requests return within 3 seconds. Zero double bookings. |
-
-**Tactic used:** *Unique constraint at DB level* — `UNIQUE(doctor_id, clinic_id, appointment_date, start_time)` ensures atomicity. No application-level locking needed.
-
----
-
-### QA 3 — Modifiability
-
-**Scenario:** The team wants to add a Payment Service.
-
-| Part | Value |
-|---|---|
-| Source | Developer |
-| Stimulus | New requirement: online payment before appointment confirmation |
-| Artifact | System architecture |
-| Environment | Post-deployment, system live |
-| Response | Create new `payment-service` folder, add route in gateway, call from Appointment Service after booking |
-| Response Measure | Change requires modifying 2 files (gateway/index.js + appointmentController.js). Zero changes to other services. Deployed independently. |
-
-**Tactic used:** *Microservices decomposition* — each service is independently deployable. New services are added without modifying existing ones (OCP).
-
----
-
-### QA 4 — Security
+### Security
 
 **Scenario:** An unauthenticated user attempts to book an appointment.
 
-| Part | Value |
+| Element | Value |
 |---|---|
-| Source | Malicious or unauthenticated external actor |
+| Source | Unauthenticated external actor |
 | Stimulus | POST /api/appointments without Authorization header |
 | Artifact | API Gateway |
 | Environment | Normal operation |
 | Response | Gateway returns 401 Unauthorized. Request never reaches Appointment Service. |
-| Response Measure | 100% of unauthenticated requests blocked at gateway. Zero unauthorized bookings in DB. |
+| Response Measure | 100% of unauthenticated requests blocked at gateway. Zero unauthorized DB writes. |
 
-**Tactic used:** *Authenticate actors at gateway* — JWT verified centrally before forwarding. Services trust x-user-id headers set by gateway.
+**Tactic:** Authenticate actors at the gateway. Authorize actors in each service using JWT role claims (patient / doctor / admin).
 
 ---
 
-### QA 5 — Testability
+### Modifiability
 
-**Scenario:** Developer wants to test the Scheduling Service slot generation in isolation.
+**Scenario:** A Payment Service needs to be added.
 
-| Part | Value |
+| Element | Value |
+|---|---|
+| Source | New business requirement |
+| Stimulus | Add online payment before appointment confirmation |
+| Artifact | System architecture |
+| Environment | Post-deployment, system live |
+| Response | New `payment-service` folder created. One route added to gateway. One call added in Appointment Service. |
+| Response Measure | Zero changes to Auth, Clinic, Doctor, Scheduling, Notification, or User services. |
+
+**Tactic:** Encapsulate responsibilities per service. Restrict dependencies — services communicate only via HTTP interfaces, never via shared code.
+
+---
+
+### Performance
+
+**Scenario:** 100 patients simultaneously book the same slot.
+
+| Element | Value |
+|---|---|
+| Source | 100 concurrent patients |
+| Stimulus | 100 simultaneous POST /api/appointments for the same doctor/date/time |
+| Artifact | Appointment Service + Supabase |
+| Environment | Peak load |
+| Response | Exactly one booking succeeds. All others receive a 409 Conflict response. |
+| Response Measure | Zero double bookings. DB-level constraint enforces atomicity without application-level locking. |
+
+**Tactic:** Bound execution — `UNIQUE(doctor_id, clinic_id, appointment_date, start_time)` constraint at DB level ensures atomic conflict detection.
+
+---
+
+### Testability
+
+**Scenario:** A developer wants to test the slot generation logic in isolation.
+
+| Element | Value |
 |---|---|
 | Source | Developer |
-| Stimulus | Unit test for slot generation algorithm |
+| Stimulus | Run unit test on slot generation algorithm |
 | Artifact | Scheduling Service |
-| Environment | Development/CI environment |
-| Response | `getAvailableSlots` controller can be tested with mock Supabase client. No other service dependency. |
-| Response Measure | Each service has a `/health` endpoint. Business logic functions are pure and independently testable. |
+| Environment | Development environment |
+| Response | Controller function invoked with mock Supabase client. No other service needed. |
+| Response Measure | Every service has a `/health` endpoint. Each service runs independently with `node src/index.js`. |
 
-**Tactic used:** *Limit structural complexity* — each service has a single responsibility. The slot generation algorithm is contained in one controller function with no cross-service dependencies.
+**Tactic:** Specialised interfaces (`/health` endpoints). Single responsibility per service — slot generation logic isolated to one controller with no cross-service dependencies.
 
 ---
 
-### QA 6 — Scalability
+### Scalability
 
-**Scenario:** The system needs to handle 10x more clinics and patients.
+**Scenario:** User base grows 10x.
 
-| Part | Value |
+| Element | Value |
 |---|---|
 | Source | Business growth |
-| Stimulus | User base grows from 100 to 1,000 concurrent users |
-| Artifact | Appointment Service (highest load) |
+| Stimulus | 1,000 concurrent users (up from 100) |
+| Artifact | Appointment Service (highest load service) |
 | Environment | Production |
-| Response | Appointment Service scaled horizontally on Render (multiple instances). Other services unaffected. |
-| Response Measure | Appointment Service scales independently without redeploying Auth or Notification services. |
+| Response | Appointment Service scaled to multiple instances on Render. Other services unaffected. |
+| Response Measure | Appointment Service scales independently without redeploying any other service. |
 
-**Tactic used:** *Horizontal scaling per service* — microservices allow independent scaling of high-load components.
+**Tactic:** Horizontal scaling per service — each service is independently deployable and scalable.
 
 ---
 
-## 7. ADD — Attribute-Driven Design Rationale
+## 7. Design Rationale — ADD Method
 
-### ADD Process Summary
+The Attribute-Driven Design (ADD) method was used to derive this architecture.
 
-**Step 1: Identify ASRs (Architecturally Significant Requirements)**
-
-The utility tree for this system:
+### Architecturally Significant Requirements (Utility Tree)
 
 ```
 UTILITY
-├── Availability (H, H)
-│   └── "A crash in one service must not crash others" → Fault isolation
-├── Security (H, H)
-│   └── "Only authenticated users can book appointments" → JWT at gateway
-├── Modifiability (H, M)
-│   └── "Adding a Payment service must not change existing services"
-├── Performance (M, H)
-│   └── "Double booking must be prevented under concurrent load"
-└── Testability (M, M)
-    └── "Each service must be independently testable"
+├── Availability                        (High business value, High architectural impact)
+│   └── Service crash must not cascade
+├── Security                            (High, High)
+│   └── Only authenticated users can book
+├── Modifiability                       (High, Medium)
+│   └── New services addable without touching existing ones
+├── Performance                         (Medium, High)
+│   └── No double booking under concurrent load
+└── Testability                         (Medium, Medium)
+    └── Each service independently runnable and testable
 ```
 
-**Step 2: Architectural Decisions (Generate and Test)**
+### Generate and Test
 
-| ASR | Pattern/Tactic Chosen | Why |
+**Initial hypothesis:** Monolithic Express application — all services in one codebase.
+
+**Test against ASRs:**
+- Fault isolation ✗ — notification crash kills entire app
+- Independent deployability ✗ — one deployment for everything
+- Security ✗ — auth logic scattered across controllers
+
+**Verdict:** Rejected.
+
+**Next hypothesis:** SOA / Microservices with API Gateway.
+
+**Test against ASRs:**
+- Fault isolation ✅ — separate processes
+- Independent deployability ✅ — separate Render services
+- Security ✅ — JWT verified centrally at gateway
+- Double booking prevention ✅ — DB UNIQUE constraint
+- Testability ✅ — `/health` endpoints, single-responsibility controllers
+
+**Verdict:** Accepted. All (High, High) ASRs satisfied.
+
+### Design Decisions
+
+| ASR | Decision | Tactic |
 |---|---|---|
-| Fault isolation | Microservices + async notification | Service boundaries prevent cascade failures |
-| Centralised auth | API Gateway with JWT verification | Single point of auth enforcement |
-| Double booking prevention | DB UNIQUE constraint | Atomic, lock-free, database-enforced |
-| Independent deployability | Monorepo + separate Render services | Each folder = one deployable unit |
-| Role-based access | JWT claims (role field) + authorize middleware | Lightweight, stateless RBAC |
-
-**Step 3: Design Solution**
-
-Initial hypothesis: **Monolithic architecture** (one Express app, all routes in one codebase).
-
-**Test:** Does it satisfy fault isolation ASR?
-→ **No.** A crash in notification code would crash the entire app.
-
-Next hypothesis: **Microservices with API Gateway.**
-
-**Test:** Does it satisfy all (H,H) ASRs?
-→ **Yes.**
-- Fault isolation ✅ — services are separate processes
-- Security ✅ — gateway verifies JWT before forwarding
-- Double booking ✅ — DB UNIQUE constraint handles concurrent requests
-
-**Step 4: Verify**
-
-All (H,H) ASRs satisfied. Non-ASR requirements (payment, SMS) deferred to future sprints as new services.
+| Fault isolation | Async notification call | Ignore faulty behaviour |
+| Centralised auth | JWT at API Gateway | Authenticate actors |
+| Double booking | DB UNIQUE constraint | Bound execution |
+| Independent deploy | Separate Render service per folder | Microservices decomposition |
+| Role-based access | JWT role claim + authorize middleware | Authorize actors |
 
 ---
 
 ## 8. Design Decisions and Tradeoffs
 
-### Decision 1: Shared Database vs. Database per Service
+### Shared Database vs. Database per Service
 
-**Chosen:** Shared Supabase instance (separate logical schemas)
+**Decision:** Shared Supabase PostgreSQL instance with logical table separation.
 
-**Rationale:** True database-per-service would require cross-service data joins via HTTP, significantly increasing latency for appointment queries that need patient, doctor, and clinic data simultaneously. For a student project on free tier infrastructure, shared DB with logical separation was the pragmatic choice.
+**Rationale:** True database-per-service requires cross-service data fetching via HTTP for queries that join patient, doctor, and clinic data. This adds significant latency for appointment queries. For the current scale and free-tier infrastructure, shared DB with application-layer separation was the pragmatic choice.
 
-**Tradeoff:** Reduces strict service isolation at the data layer. Mitigated by ensuring each service only queries its own tables via the application layer.
-
----
-
-### Decision 2: Synchronous vs. Asynchronous Notification
-
-**Chosen:** Fire-and-forget HTTP (asynchronous)
-
-**Rationale:** Appointment booking response time must not depend on notification delivery. Email/SMS delivery can be delayed without affecting the user experience.
-
-**Tradeoff:** No guaranteed delivery. If Notification Service is down, the notification is lost. Mitigated in production by a message queue (e.g., Supabase Realtime or Redis).
+**Tradeoff:** Reduced strict data isolation. Mitigated by ensuring each service only queries its own tables in code.
 
 ---
 
-### Decision 3: JWT at Gateway vs. per Service
+### Synchronous vs. Asynchronous Notification
 
-**Chosen:** JWT verified at Gateway only. Services trust x-user-id header.
+**Decision:** Fire-and-forget HTTP call (asynchronous).
 
-**Rationale:** Avoids repeating JWT verification logic and the JWT_SECRET in every service. Gateway is the single trust boundary.
+**Rationale:** Appointment booking response time must not depend on notification delivery. A slow or crashed Notification Service must not delay booking confirmation.
 
-**Tradeoff:** If a request bypasses the gateway (internal network), services are unprotected. Mitigated in production by Render's private networking.
-
----
-
-### Decision 4: Monorepo vs. Polyrepo
-
-**Chosen:** Monorepo (one GitHub repo, multiple service folders)
-
-**Rationale:** Easier to manage for a solo developer. Shared utilities (`shared/middleware`, `shared/utils`) can be referenced directly. Single CI/CD pipeline.
-
-**Tradeoff:** All services deploy when any file changes (in current config). Mitigated in production by per-folder deploy triggers in Render.
+**Tradeoff:** No guaranteed delivery. If Notification Service is down, the notification event is lost. Mitigated in production by adding a message queue.
 
 ---
 
-## 9. Inter-Service Communication Map
+### JWT at Gateway vs. per Service
+
+**Decision:** JWT verified only at the API Gateway. Services trust the `x-user-id` and `x-user-role` headers set by the gateway.
+
+**Rationale:** Avoids duplicating JWT verification logic and the `JWT_SECRET` in every service. The gateway is the single trust boundary.
+
+**Tradeoff:** Services are unprotected if accessed directly (bypassing gateway). Mitigated in production by Render's private networking.
+
+---
+
+### Monorepo vs. Polyrepo
+
+**Decision:** Monorepo — one GitHub repository, one folder per service.
+
+**Rationale:** Easier to manage for a solo developer. Shared utilities can be referenced directly. Single git history for the whole system.
+
+**Tradeoff:** A push to any file triggers potential redeployment of all services. Mitigated in production by per-folder deploy filters in Render.
+
+---
+
+## 9. Inter-Service Communication
 
 ```
 Patient books appointment:
   Frontend → Gateway → Appointment Service
-                              │
-                              ├── Supabase (patient_profiles)
-                              ├── Supabase (appointments — INSERT)
-                              ├── Supabase (appointment_history — INSERT)
-                              └── Notification Service (fire-and-forget)
-                                          │
-                                          └── Supabase (notification_log — INSERT)
+                            │
+                            ├── Supabase (read patient_profiles)
+                            ├── Supabase (check existing appointments)
+                            ├── Supabase (INSERT appointment)
+                            ├── Supabase (INSERT appointment_history)
+                            └── Notification Service [async]
+                                      │
+                                      └── Supabase (INSERT notification_log)
 
-Patient views slots:
+Patient views available slots:
   Frontend → Gateway → Scheduling Service
-                              │
-                              ├── Supabase (availability)
-                              ├── Supabase (leave_requests)
-                              └── Supabase (appointments — check existing)
+                            │
+                            ├── Supabase (read availability)
+                            ├── Supabase (check leave_requests)
+                            └── Supabase (read booked appointments for date)
 
 Admin creates clinic:
-  Frontend → Gateway (admin role check) → Clinic Service
-                                                │
-                                                └── Supabase (clinics — INSERT)
+  Frontend → Gateway (verifies admin role) → Clinic Service
+                                                  │
+                                                  └── Supabase (INSERT clinics)
+
+Patient login:
+  Frontend → Gateway (public route) → Auth Service
+                                           │
+                                           ├── Supabase (read users)
+                                           └── bcrypt password verify → return JWT
 ```
 
 ---
 
 ## 10. Database Design
 
-### Entity Relationship Summary
+### Tables
 
-```
-users (1) ──── (1) patient_profiles
-users (1) ──── (1) doctor_profiles
-users (M) ──── (M) clinics          [via clinic_admins]
-doctor_profiles (M) ── (M) clinics  [via doctor_clinic]
-
-doctor_profiles (1) ── (M) availability
-doctor_profiles (1) ── (M) leave_requests
-
-patient_profiles (1) ── (M) appointments
-doctor_profiles  (1) ── (M) appointments
-clinics          (1) ── (M) appointments
-
-appointments (1) ── (M) appointment_history
-appointments (1) ── (M) notification_log
-```
+| Table | Description |
+|---|---|
+| `users` | All user accounts with role (patient / doctor / admin) |
+| `patient_profiles` | Patient personal information |
+| `doctor_profiles` | Doctor information and specialization |
+| `clinics` | Clinic details and location |
+| `clinic_admins` | Maps admin users to clinics |
+| `doctor_clinic` | Maps doctors to clinics with consultation fee |
+| `availability` | Weekly recurring availability per doctor per clinic |
+| `leave_requests` | Doctor leave days |
+| `appointments` | All appointment bookings |
+| `appointment_history` | Audit trail of status changes |
+| `notification_log` | Record of all notification events |
 
 ### Key Constraints
 
-| Constraint | Table | Purpose |
-|---|---|---|
-| `UNIQUE(doctor_id, clinic_id, appointment_date, start_time)` | appointments | Prevents double booking |
-| `UNIQUE(doctor_id, clinic_id)` | doctor_clinic | A doctor can only be assigned to a clinic once |
-| `UNIQUE(clinic_id, user_id)` | clinic_admins | A user can only be admin of a clinic once |
-| `CHECK role IN ('patient','doctor','admin')` | users | Enforces valid roles |
-| `CHECK status IN ('booked','confirmed','cancelled','completed','no_show')` | appointments | Enforces valid states |
+| Constraint | Purpose |
+|---|---|
+| `UNIQUE(doctor_id, clinic_id, appointment_date, start_time)` | Prevents double booking at DB level |
+| `UNIQUE(doctor_id, clinic_id)` on doctor_clinic | A doctor assigned to a clinic only once |
+| `CHECK role IN ('patient','doctor','admin')` | Enforces valid user roles |
+| `CHECK status IN ('booked','confirmed','cancelled','completed','no_show')` | Enforces valid appointment states |
 
-### Indexes (Performance)
+### Indexes
 
 ```sql
-idx_appointments_doctor_date  — Fast lookup: all appointments for a doctor on a date
-idx_appointments_patient      — Fast lookup: all appointments for a patient
-idx_appointments_clinic_date  — Fast lookup: all appointments at a clinic on a date
-idx_availability_doctor       — Fast slot generation per doctor/clinic
-idx_doctor_clinic_clinic      — Fast doctor list per clinic
+idx_appointments_doctor_date  — All appointments for a doctor on a given date
+idx_appointments_patient      — All appointments for a patient
+idx_appointments_clinic_date  — All appointments at a clinic on a given date
+idx_availability_doctor       — Slot generation per doctor/clinic
+idx_doctor_clinic_clinic      — Doctor list per clinic
 ```
 
 ---
 
-*Document prepared for SS G653 Software Architectures — BITS Pilani, 2024-25*
+## 11. Setup and Execution
+
+### Prerequisites
+- Node.js 20+
+- Supabase account (free tier)
+- Render account (free tier)
+- Vercel account (free tier)
+
+### Local Setup
+
+```bash
+# 1. Clone
+git clone https://github.com/shreya77077/multi-clinic-booking
+cd multi-clinic-booking
+
+# 2. Install dependencies
+cd services/auth-service && npm install && cd ../..
+cd services/user-service && npm install && cd ../..
+cd services/clinic-service && npm install && cd ../..
+cd services/doctor-service && npm install && cd ../..
+cd services/scheduling-service && npm install && cd ../..
+cd services/appointment-service && npm install && cd ../..
+cd services/notification-service && npm install && cd ../..
+cd gateway && npm install && cd ..
+cd frontend && npm install && cd ..
+
+# 3. Configure environment variables
+# Copy .env.example to .env in each service folder and fill in:
+# SUPABASE_URL, SUPABASE_SERVICE_KEY, JWT_SECRET, PORT
+
+# 4. Run database schema
+# Paste docs/schema.sql into Supabase SQL Editor and execute
+
+# 5. Start all backend services
+node services/auth-service/src/index.js &
+node services/user-service/src/index.js &
+node services/clinic-service/src/index.js &
+node services/doctor-service/src/index.js &
+node services/scheduling-service/src/index.js &
+node services/appointment-service/src/index.js &
+node services/notification-service/src/index.js &
+node gateway/src/index.js &
+
+# 6. Start frontend
+cd frontend && npm run dev
+```
+
+### Verify All Services Running
+
+```bash
+curl http://localhost:8080/health   # API Gateway
+curl http://localhost:3001/health   # Auth
+curl http://localhost:3002/health   # User
+curl http://localhost:3003/health   # Clinic
+curl http://localhost:3004/health   # Doctor
+curl http://localhost:3005/health   # Scheduling
+curl http://localhost:3006/health   # Appointment
+curl http://localhost:3007/health   # Notification
+```
+
+### Open App
+
+```
+http://localhost:3000
+```
+
+### Testing the Full Flow
+
+1. Register an **admin** account at `/register`
+2. Login as admin → create clinics from Admin Dashboard
+3. Register a **doctor** account at `/register`
+4. Use Supabase SQL Editor to assign doctor to clinic and set availability
+5. Register a **patient** account at `/register`
+6. Login as patient → select clinic → select doctor → pick date → book slot
+7. Login as doctor → verify appointment appears in Doctor Dashboard
+
+---
+
+*Documentation prepared for SS G653 Software Architectures, BITS Pilani, 2024-25*
